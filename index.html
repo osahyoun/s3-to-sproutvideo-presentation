@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+
+	<head>
+		<meta charset="utf-8">
+
+		<title>reveal.js - The HTML Presentation Framework</title>
+
+		<meta name="description" content="A framework for easily creating beautiful presentations using HTML">
+		<meta name="author" content="Hakim El Hattab">
+
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+		<link rel="stylesheet" href="css/reveal.min.css">
+		<link rel="stylesheet" href="css/theme/default.css" id="theme">
+
+		<!-- For syntax highlighting -->
+		<link rel="stylesheet" href="lib/css/zenburn.css">
+
+		<!-- If the query includes 'print-pdf', use the PDF print sheet -->
+		<script>
+			document.write( '<link rel="stylesheet" href="css/print/' + ( window.location.search.match( /print-pdf/gi ) ? 'pdf' : 'paper' ) + '.css" type="text/css" media="print">' );
+		</script>
+
+		<!--[if lt IE 9]>
+		<script src="lib/js/html5shiv.js"></script>
+		<![endif]-->
+	</head>
+
+	<body>
+
+		<div class="reveal">
+
+			<!-- Any section element inside of this container is displayed as a slide -->
+			<div class="slides">
+				<section>
+					<h1>Private Video</h1>
+					<h3>Not As Simple As You Think!</h3>
+				</section>
+
+				<section>
+					<h2>Spec</h2>
+          <p>
+            Getting Video on to Spoutvideo
+          </p>
+				</section>
+
+				<section>
+					<h2>Amazon S3 - CORS</h2>
+					<h3>Prepare Your Bucket</h3>
+          					<pre><code data-trim contenteditable>
+<CORSConfiguration>
+ <CORSRule>
+   <AllowedOrigin>http://entry.quipper.com</AllowedOrigin>
+   <AllowedMethod>POST</AllowedMethod>
+ </CORSRule>
+</CORSConfiguration>
+          	</code></pre>
+				</section>
+
+
+				<section>
+          <h2>Secure Uploading</h2>
+<pre><code>
+  = hidden_field_tag 'key', ""
+  = hidden_field_tag 'AWSAccessKeyId', VideoManager.s3_key
+  = hidden_field_tag 'acl', 'private'
+  = hidden_field_tag 'success_action_redirect', ""
+  = hidden_field_tag 'policy', @form.policy
+  = hidden_field_tag 'signature', @form.signature
+  = hidden_field_tag 'Content-Type', ''
+
+</code></pre>
+
+<pre><code>
+  # VideoManager::FormData
+  def document
+    { expiration: expiration_date,
+      conditions: [
+        { bucket: VideoManager.bucket},
+        ["starts-with", "$key", ""],
+        { acl: :private },
+        { success_action_redirect: "" },
+        ["starts-with", "$Content-Type", ""],
+        ["content-length-range", 0, CONTENT_LENGTH]
+      ]
+    }
+  end
+</code></pre>
+</section>
+
+
+<section>
+  <h2>Update Key before Posting</h2>
+
+<code><pre>
+  key = () ->
+    stamp = +new Date()
+    return "#{$form.data('organization-id')}-#{stamp}-#{filename()}"
+</code></pre>
+
+</section>
+
+<section>
+  <h2>Keep Backend in the Know</h2>
+
+<code><pre>
+  xhr.onload = createVideoObject
+
+  //
+
+  createVideoObject = () ->
+    jQuery.post "/beta/organizations/#{$form.data('organization-id')}/media/videos",
+      'key': $form.find("#key").val(),
+      'state': 'pending',
+      'title': unescape(FILENAME.replace(/.\w+$/, ''))
+      (data) ->
+        addRecordToTable(data)
+
+</code></pre>
+
+</section>
+
+<section>
+	<h2>Phew!</h2>
+
+  <p>
+	<ol>
+	  <li><p>Video is now on Amazon S3</p></li>
+	  <li><p>The upload was non-blocking</p></li>
+	  <li><p>The user has a 'pending' video record</p></li>
+	</ol>
+  </p>
+	<h3><em>So, now what?</em></h3>
+</section>
+		<section>
+		  <h2>S3 to Sproutvideo</h2>
+
+		  <p><code><strong>POST</strong> https://api.sproutvideo.com/v1/videos</code></p>
+		  <p>Body must be <code>multipart/form-data</code></p>
+    </section>
+				<section>
+
+					<h2>s3fs</h2>
+          <p>FUSE-based file system backed by Amazon S3</p>
+
+
+          <p><a href='https://code.google.com/p/s3fs'>https://code.google.com/p/s3fs</a></p>
+				</section>
+				<section>
+
+					<h2>s3fs</h2>
+
+          <p><code>mkdir /quipper-videos</code></p>
+
+          <p><code>s3fs bucketname /quipper-videos</code></p>
+
+
+				</section>
+
+
+				<section>
+
+					<h2>s3fs</h2>
+
+          <p><code>mkdir /quipper-videos</code></p>
+
+          <p><code>s3fs bucketname /quipper-videos</code></p>
+
+				</section>
+
+
+				<section>
+
+<pre><code>
+  # RUNNER
+  def VideoProcessor.main
+    while true
+      Dir[DRIVE].each do |path|
+        process(path)
+      end
+      sleep SLEEP_TIME
+    end
+  end
+
+</code></pre>
+
+<pre class='fragment'><code>
+  # PROCESSOR
+  def VideoProcessor.process(path)
+    unless exists?(path)
+      redis.sadd(LOG_KEY, path)
+      Video.new(path).send_to_sproutvideo
+    end
+  end
+
+</code></pre>
+
+        </section>
+
+        <section>
+
+          <h2>Sending to Sproutvideo</h2>
+          <p>POST video file to Sproutvideo, passing notification URL and the title.</p>
+
+
+<pre><code>
+  def send_to_sproutvideo
+    begin
+      resp = Sproutvideo::Video.create(path, notification_url: notification_url, title: parser.title, requires_signed_embeds: true)
+      if resp.success?
+        update_video(resp.body)
+      else
+        update_video({error: resp.body[:error], state: 'error'})
+      end
+    rescue => e
+      VideoProcessor.redis.hset(VideoProcessor::ERRORS_KEY, path, e.to_s)
+      update_video({error: e.to_s})
+    ensure
+      # Delete file, even if Sproutvideo is unable to process file.
+      File.delete(path)
+    end
+  end
+end
+</code></pre>
+</section>
+
+
+   <section>
+
+      <h2>Notification</h2>
+      <p class='fragment'>Sproutvideo POSTs to passed notification URL when video has been processed.</p>
+
+<pre class='fragment'><code>
+  def notification_url
+    "#{ENV['SPROUTVIDEO_NOTIFICATION_DOMAIN']}/beta/organizations/#{parser.organization_id}/media/video_processed?key=#{filename}"
+  end
+
+</code></pre>
+
+
+
+
+<pre class='fragment'><code>
+  {
+    "created_at": "2012-12-20T00:07:54-05:00",
+    "updated_at": "2012-12-20T00:07:54-05:00",
+    "height": null,
+    "width": null,
+    "description": "An new video",
+    "id": "a098d2bbd33e1c328",
+    "sd_video_file_size": 0,
+    "plays": 0,
+    "title": "new upload.mov",
+    "source_video_file_size": 0,
+    "hd_video_file_size": 0,
+    "embed_code": "<iframe class='sproutvideo-player' type='text/html' src='http://videos.sproutvideo.com/embed/a098d2bbd33e1c328/7ca00d6d622a8e8d?type=sd' width='630' height='354' frameborder='0'></iframe>",
+    "state": "inspecting",
+    "security_token": "7ca00d6d622a8e8d",
+    "progress": 0,
+    "tags": [],
+    "duration": null,
+    "password": null,
+    "privacy": 2,
+    "requires_signed_embeds": false,
+    "assets": {
+      "videos": {
+        "hd_video_url": null,
+        "sd_video_url": null,
+        "source_video_url": null
+      },
+      "thumbnails": [],
+      "poster_frames": []
+
+</pre></code>
+</section>
+
+<section>
+  <h3>Overview</h3>
+
+  <img src='pic.png' />
+
+</section>
+
+
+				<!-- Example of nested vertical slides -->
+
+				<section>
+					<h1>THE END</h1>
+				</section>
+
+			</div>
+
+		</div>
+
+		<script src="lib/js/head.min.js"></script>
+		<script src="js/reveal.min.js"></script>
+
+		<script>
+
+			// Full list of configuration options available here:
+			// https://github.com/hakimel/reveal.js#configuration
+			Reveal.initialize({
+				controls: true,
+				progress: true,
+				history: true,
+				center: true,
+
+				theme: Reveal.getQueryHash().theme, // available themes are in /css/theme
+				transition: Reveal.getQueryHash().transition || 'default', // default/cube/page/concave/zoom/linear/fade/none
+
+				// Optional libraries used to extend on reveal.js
+				dependencies: [
+					{ src: 'lib/js/classList.js', condition: function() { return !document.body.classList; } },
+					{ src: 'plugin/markdown/marked.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/markdown/markdown.js', condition: function() { return !!document.querySelector( '[data-markdown]' ); } },
+					{ src: 'plugin/highlight/highlight.js', async: true, callback: function() { hljs.initHighlightingOnLoad(); } },
+					{ src: 'plugin/zoom-js/zoom.js', async: true, condition: function() { return !!document.body.classList; } },
+					{ src: 'plugin/notes/notes.js', async: true, condition: function() { return !!document.body.classList; } }
+					// { src: 'plugin/search/search.js', async: true, condition: function() { return !!document.body.classList; } }
+					// { src: 'plugin/remotes/remotes.js', async: true, condition: function() { return !!document.body.classList; } }
+				]
+			});
+
+		</script>
+
+	</body>
+</html>
